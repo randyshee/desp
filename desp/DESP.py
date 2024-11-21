@@ -3,6 +3,7 @@ import json
 import pickle
 import sys
 import tempfile
+from itertools import product
 from rdkit import Chem
 from rdkit.Chem import Draw
 
@@ -341,3 +342,120 @@ class DESP:
                 )
             dot.render(path)
         return
+
+    def _helper_extract_top(self, node, graph, routes_left):
+        """
+        Helper function to extract multiple synthetic routes from the search graph.
+
+        Args:
+            node: The current node to extract routes from
+            graph: The search graph
+            routes_left: Number of routes still needed
+
+        Returns:
+            list: List of route dictionaries, sorted by total_value
+        """
+        if len(list(graph.successors(node))) == 0:  # if leaf node
+            return [{
+                "smiles": node.smiles,
+                "type": "mol",
+                "orientation": "top" if isinstance(node, TopDownMolNode) else "bottom",
+                "mol_type": "building",
+                "total_value": node.total_value
+            }]
+        
+        # Get all solved children
+        solved_children = []
+        for child in graph.successors(node):
+            if isinstance(child, TopDownRxnNode) and child.desp_solved:
+                solved_children.append(child)
+        if len(solved_children) == 0:
+            for child in graph.successors(node):
+                if child.solved:
+                    solved_children.append(child)
+                
+        # Sort children by total_value and take top routes_left
+        solved_children.sort(key=lambda x: x.total_value)
+        solved_children = solved_children[:routes_left]
+        
+        all_routes = []
+        for child in solved_children:
+            # For each reaction, get all possible combinations of children routes
+            child_routes = []
+            for reactant in graph.successors(child):
+                reactant_routes = self._helper_extract_top(reactant, graph, routes_left)
+                child_routes.append(reactant_routes)
+            
+            # Create all possible combinations of children routes
+            for combo in product(*child_routes):
+                if isinstance(node, TopDownMolNode):
+                    node.is_building_block = node.inherently_solved
+                
+                route = {
+                    "smiles": node.smiles,
+                    "type": "mol",
+                    "mol_type": "intermediate" if not node.is_building_block else "building",
+                    "orientation": "top" if isinstance(node, TopDownMolNode) else "bottom",
+                    "total_value": child.total_value,
+                    "children": [{
+                        "smiles": child.smiles,
+                        "template": child.template,
+                        "type": "reaction",
+                        "orientation": "top" if isinstance(child, TopDownRxnNode) else "bottom",
+                        "children": list(combo)
+                    }]
+                }
+                all_routes.append(route)
+                
+        # Sort routes by total_value and return top routes_left
+        all_routes.sort(key=lambda x: x["total_value"])
+        return all_routes[:routes_left]
+
+    def _extract_top_solved_routes(self, graph, target, top_r):
+        """
+        Extract TOP_R solved synthetic routes from the search graph.
+
+        Args:
+            graph: The search graph
+            target: The target node
+            top_r: Number of top routes to extract
+
+        Returns:
+            list: List of TOP_R synthetic routes, sorted by total_value
+        """
+        solved_children = []
+        for child in graph.successors(target):
+            if (isinstance(child, TopDownRxnNode) and child.desp_solved) or isinstance(child, BottomUpRxnNode):
+                solved_children.append(child)
+                
+        # Sort children by total_value and take top_r
+        solved_children.sort(key=lambda x: x.total_value)
+        solved_children = solved_children[:top_r]
+        
+        all_routes = []
+        for child in solved_children:
+            child_routes = []
+            for reactant in graph.successors(child):
+                reactant_routes = self._helper_extract_top(reactant, graph, top_r)
+                child_routes.append(reactant_routes)
+                
+            # Create all possible combinations
+            for combo in product(*child_routes):
+                route = {
+                    "smiles": target.smiles,
+                    "type": "mol",
+                    "mol_type": "target",
+                    "total_value": child.total_value,
+                    "children": [{
+                        "smiles": child.smiles,
+                        "template": child.template,
+                        "type": "reaction",
+                        "orientation": "top" if isinstance(child, TopDownRxnNode) else "bottom",
+                        "children": list(combo)
+                    }]
+                }
+                all_routes.append(route)
+        
+        # Sort all routes by total_value and return top_r
+        all_routes.sort(key=lambda x: x["total_value"])
+        return all_routes[:top_r]
