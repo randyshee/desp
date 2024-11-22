@@ -91,6 +91,7 @@ class DESP:
         max_depth_top=21,
         max_depth_bot=11,
         must_use_sm=True,
+        stop_on_first_solution=True
     ):
         """
         Perform a search to find a synthetic route for the target molecule from the given starting materials.
@@ -128,7 +129,7 @@ class DESP:
             top_k=top_k,
             max_depth_top=max_depth_top,
             max_depth_bot=max_depth_bot,
-            stop_on_first_solution=True,
+            stop_on_first_solution=stop_on_first_solution,
             must_use_sm=must_use_sm,
             retro_only=False if self.strategy in ["f2e", "f2f"] else True,
         )
